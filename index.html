@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Para ti</title>
+<meta name="description" content="Toca la pantalla.">
+<meta name="theme-color" content="#0d0712">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@500;700&display=swap">
+<style>
+/* ============================================================
+   Una sola escena: un cielo que se vuelve corazón y luego palabras.
+   ============================================================ */
+:root{
+  --night:#0d0712; --ink:#fbeef3; --soft:#c9a9b8; --rose:#ff6f91; --gold:#ffc46b;
+  --f-display:"Instrument Serif",Georgia,"Times New Roman",serif;
+  --f-ui:"Manrope",system-ui,-apple-system,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--night);color:var(--ink);font-family:var(--f-ui);overflow:hidden;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:pointer}
+
+.stage{position:fixed;left:0;right:0;bottom:0;padding:0 20px calc(env(safe-area-inset-bottom,0px) + 7vh);display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center;pointer-events:none}
+.intro{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:0 20px;pointer-events:none;transition:opacity .9s ease}
+.intro .to{font-family:var(--f-display);font-style:italic;font-size:clamp(2.6rem,9vw,5rem);line-height:1;color:var(--ink);text-shadow:0 0 30px rgba(255,111,145,.45)}
+.intro .sub{font-size:13px;letter-spacing:.24em;text-transform:uppercase;color:var(--soft)}
+
+.msg{font-family:var(--f-display);font-size:clamp(1.6rem,5.2vw,2.7rem);line-height:1.15;max-width:22ch;text-wrap:balance;min-height:2.3em;display:flex;align-items:flex-end;justify-content:center;opacity:0;transform:translateY(10px);transition:opacity .6s ease,transform .6s ease;text-shadow:0 2px 24px rgba(13,7,18,.9)}
+.msg.show{opacity:1;transform:none}
+.msg em{color:var(--rose)}
+.extra{font-size:15px;color:var(--soft);line-height:1.5;max-width:36ch;opacity:0;transition:opacity .8s ease .4s}
+.extra.show{opacity:1}
+.extra b{color:var(--gold);font-weight:700;font-variant-numeric:tabular-nums}
+
+.hint{font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--soft);opacity:.75;animation:breathe 2.4s ease-in-out infinite}
+.hint[hidden]{display:none}
+@keyframes breathe{50%{opacity:.25}}
+
+.again{pointer-events:auto;font:inherit;font-size:14px;font-weight:700;letter-spacing:.04em;color:var(--ink);background:rgba(255,111,145,.14);border:1.5px solid rgba(255,111,145,.6);border-radius:999px;padding:10px 22px;cursor:pointer;opacity:0;transition:opacity .8s ease 1s,background .2s}
+.again.show{opacity:1}
+.again:hover{background:rgba(255,111,145,.28)}
+.again:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
+.again[hidden]{display:none}
+
+@media (prefers-reduced-motion:reduce){.hint{animation:none}}
+</style>
+</head>
+<body>
+
+<canvas id="c" aria-label="Animación de un corazón hecho de estrellas. Toca para continuar." role="img"></canvas>
+
+<div class="intro" id="intro">
+  <div class="sub">Esto es para ti</div>
+  <div class="to" id="introName"></div>
+</div>
+
+<div class="stage">
+  <div class="msg" id="msg" aria-live="polite"></div>
+  <div class="extra" id="extra"></div>
+  <button class="again" id="again" type="button" hidden>Verlo otra vez</button>
+  <div class="hint" id="hint">Toca la pantalla</div>
+</div>
+
+<script>
+/* ============================================================
+   ✏️  EDITA AQUÍ  — todo lo personal está en este bloque
+   ============================================================ */
+const CONFIG = {
+  // Cómo le dices (aparece al inicio)
+  nombre: "mi amor",
+
+  // Fecha en que empezaron o se casaron (AAAA-MM-DD). Deja "" para ocultar el contador.
+  juntosDesde: "",
+  textoContador: "días juntos, y todos los que faltan.",
+
+  // Un mensaje por toque. Usa *asteriscos* para resaltar una palabra.
+  mensajes: [
+    "Hay algo que quiero decirte…",
+    "Desde que llegaste, todo tiene *más sentido*.",
+    "Eres mi lugar favorito, mi calma y mi risa.",
+    "Si tuviera que elegir otra vez, te elegiría a ti. *Mil veces.*",
+  ],
+
+  // Las palabras que forman las estrellas al final (cortas se ven mejor)
+  final: "Te amo",
+
+  // Firma debajo del final
+  firma: "Con todo mi corazón",
+};
+/* ============================================================ */
+
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const $ = id => document.getElementById(id);
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+let W = 0, H = 0, DPR = 1, N = 0;
+let parts = [], bursts = [], rings = [];
+let mode = "stars";            // stars | heart | text
+let stage = -1;                // -1 intro, 0..n-1 mensajes, n final
+let lastAdvance = 0;
+let textTargets = [];
+const ptr = {x:-9999, y:-9999, active:false};
+
+/* ---------- utilidades ---------- */
+const rnd = (a,b) => a + Math.random()*(b-a);
+function heartXY(t){ // curva clásica, unidades ~ [-16,16] x [-17,12]
+  const s = Math.sin(t);
+  return [16*s*s*s, -(13*Math.cos(t) - 5*Math.cos(2*t) - 2*Math.cos(3*t) - Math.cos(4*t))];
+}
+function heartGeom(){
+  const size = Math.min(W*0.9, H*0.62);
+  return { cx: W/2, cy: H*0.40, k: size/34 };
+}
+
+/* ---------- partículas ---------- */
+function makeParticles(){
+  N = Math.round(Math.min(1100, Math.max(450, (W*H)/900)));
+  parts = [];
+  for (let i=0;i<N;i++){
+    const gold = Math.random() < 0.12;
+    const outline = i < N*0.42;
+    let t = rnd(0, Math.PI*2), [hx,hy] = heartXY(t);
+    const r = outline ? rnd(0.97,1.02) : Math.sqrt(Math.random())*0.94;
+    parts.push({
+      x: rnd(0,W), y: rnd(0,H), vx:0, vy:0,
+      sx: rnd(0,W), sy: rnd(0,H), ph: rnd(0,Math.PI*2), sp: rnd(0.2,0.7),
+      rx: hx*r, ry: hy*r,
+      tx:0, ty:0,
+      size: outline ? rnd(1.1,2.1) : rnd(0.7,1.7),
+      hue: gold ? rnd(32,44) : rnd(328,356),
+      sat: gold ? 95 : rnd(75,95),
+      lit: gold ? 70 : rnd(62,78),
+      tw: rnd(0,Math.PI*2),
+    });
+  }
+}
+
+function sampleText(str){
+  const off = document.createElement("canvas");
+  off.width = W; off.height = H;
+  const o = off.getContext("2d");
+  let fs = Math.min(H*0.3, 260);
+  o.font = `italic ${fs}px "Instrument Serif", Georgia, serif`;
+  const w = o.measureText(str).width;
+  if (w > W*0.86) fs *= (W*0.86)/w;
+  o.font = `italic ${fs}px "Instrument Serif", Georgia, serif`;
+  o.textAlign = "center"; o.textBaseline = "middle";
+  o.fillStyle = "#fff";
+  o.fillText(str, W/2, H*0.40);
+  const data = o.getImageData(0,0,W,H).data;
+  // elegir espaciado para acercarnos a N puntos
+  let gap = Math.max(2, Math.round(fs/38));
+  let pts = [];
+  for (let tries=0; tries<6; tries++){
+    pts = [];
+    for (let y=0; y<H; y+=gap) for (let x=0; x<W; x+=gap)
+      if (data[(y*W + x)*4 + 3] > 128) pts.push([x + rnd(-.6,.6), y + rnd(-.6,.6)]);
+    if (pts.length > N*1.6 && gap < 12) gap++; else if (pts.length < N*0.6 && gap > 2) gap--; else break;
+  }
+  // barajar para que la transición se vea orgánica
+  for (let i=pts.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [pts[i],pts[j]]=[pts[j],pts[i]]; }
+  return pts;
+}
+
+/* ---------- latido ---------- */
+function beat(t){
+  if (reduce) return 1;
+  const p = (t % 1.15);
+  const a = (p-0.12)/0.065, c = (p-0.38)/0.07;
+  return 1 + 0.075*Math.exp(-a*a) + 0.045*Math.exp(-c*c);
+}
+
+/* ---------- mini corazones al tocar ---------- */
+function heartPath(c, x, y, s){
+  c.beginPath();
+  c.moveTo(x, y + s*0.3);
+  c.bezierCurveTo(x, y, x - s*0.5, y - s*0.1, x - s*0.5, y + s*0.25);
+  c.bezierCurveTo(x - s*0.5, y + s*0.55, x, y + s*0.75, x, y + s);
+  c.bezierCurveTo(x, y + s*0.75, x + s*0.5, y + s*0.55, x + s*0.5, y + s*0.25);
+  c.bezierCurveTo(x + s*0.5, y - s*0.1, x, y, x, y + s*0.3);
+  c.closePath();
+}
+function burst(x, y, n=14){
+  for (let i=0;i<n;i++){
+    const a = rnd(0, Math.PI*2), v = rnd(1.5, 5);
+    bursts.push({x, y, vx:Math.cos(a)*v, vy:Math.sin(a)*v - 1.5, s:rnd(8,18), life:1, rot:rnd(-.5,.5), hue: Math.random()<.2 ? 40 : rnd(330,355)});
+  }
+  rings.push({x, y, r:4, life:1});
+  // empujón a las partículas cercanas
+  for (const p of parts){
+    const dx = p.x-x, dy = p.y-y, d2 = dx*dx+dy*dy;
+    if (d2 < 140*140){ const d = Math.sqrt(d2)||1, f = (1-d/140)*9; p.vx += dx/d*f; p.vy += dy/d*f; }
+  }
+}
+
+/* ---------- escena ---------- */
+function setMsg(html, extra){
+  const m = $("msg"), e = $("extra");
+  m.classList.remove("show"); e.classList.remove("show");
+  setTimeout(() => {
+    m.innerHTML = html;
+    e.innerHTML = extra || "";
+    requestAnimationFrame(() => { m.classList.add("show"); if (extra) e.classList.add("show"); });
+  }, 380);
+}
+const fmtMsg = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])).replace(/\*(.+?)\*/g, "<em>$1</em>");
+
+function counterHTML(){
+  if (!CONFIG.juntosDesde) return CONFIG.firma ? `<i>${fmtMsg(CONFIG.firma)}</i>` : "";
+  const start = new Date(CONFIG.juntosDesde + "T00:00");
+  const days = Math.floor((Date.now() - start) / 864e5);
+  if (!(days >= 0)) return CONFIG.firma || "";
+  return `<b>${days.toLocaleString("es-MX")}</b> ${fmtMsg(CONFIG.textoContador)}` + (CONFIG.firma ? `<br><i>${fmtMsg(CONFIG.firma)}</i>` : "");
+}
+
+function advance(x, y){
+  const now = performance.now();
+  burst(x, y);
+  const last = CONFIG.mensajes.length;
+  if (stage >= last) return;                 // en el final, solo corazones
+  if (now - lastAdvance < 900) return;       // evita saltarse mensajes
+  lastAdvance = now;
+  stage++;
+  if (stage === 0){
+    $("intro").style.opacity = 0;
+    mode = "heart";
+    $("hint").textContent = "Toca para continuar";
+  }
+  if (stage < last){
+    setMsg(fmtMsg(CONFIG.mensajes[stage]));
+  } else {
+    textTargets = sampleText(CONFIG.final);
+    mode = "text";
+    setMsg("", counterHTML());
+    $("hint").hidden = true;
+    const a = $("again"); a.hidden = false; requestAnimationFrame(() => a.classList.add("show"));
+    // lluvia de corazones
+    for (let i=0;i<6;i++) setTimeout(() => burst(rnd(W*.15,W*.85), rnd(H*.2,H*.6), 10), i*180);
+  }
+}
+
+function restart(){
+  stage = -1; mode = "stars"; lastAdvance = 0;
+  $("intro").style.opacity = 1;
+  $("msg").classList.remove("show"); $("extra").classList.remove("show");
+  const a = $("again"); a.classList.remove("show"); a.hidden = true;
+  $("hint").hidden = false; $("hint").textContent = "Toca la pantalla";
+  for (const p of parts){ p.vx += rnd(-8,8); p.vy += rnd(-8,8); }
+}
+
+/* ---------- bucle ---------- */
+function frame(ms){
+  const t = ms/1000;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "rgba(13,7,18,0.30)";
+  ctx.fillRect(0,0,W,H);
+
+  const g = heartGeom(), b = beat(t);
+  const k = mode === "stars" ? 0.006 : mode === "heart" ? 0.03 : 0.024;
+  const R = Math.min(W,H) * 0.16;
+
+  ctx.globalCompositeOperation = "lighter";
+  for (let i=0;i<parts.length;i++){
+    const p = parts[i];
+    let tx, ty;
+    if (mode === "heart"){
+      tx = g.cx + p.rx*g.k*b; ty = g.cy + p.ry*g.k*b;
+    } else if (mode === "text" && textTargets.length){
+      const q = textTargets[i % textTargets.length];
+      tx = q[0] + Math.sin(t*1.3 + p.ph)*0.8; ty = q[1] + Math.cos(t*1.1 + p.ph)*0.8;
+    } else {
+      tx = p.sx + Math.sin(t*p.sp*0.4 + p.ph)*24; ty = p.sy + Math.cos(t*p.sp*0.3 + p.ph)*18;
+    }
+    p.vx += (tx - p.x) * k; p.vy += (ty - p.y) * k;
+    if (ptr.active){
+      const dx = p.x - ptr.x, dy = p.y - ptr.y, d2 = dx*dx + dy*dy;
+      if (d2 < R*R){ const d = Math.sqrt(d2)||1, f = (1 - d/R)*1.6; p.vx += dx/d*f; p.vy += dy/d*f; }
+    }
+    p.vx *= 0.86; p.vy *= 0.86;
+    p.x += p.vx; p.y += p.vy;
+
+    const twinkle = mode === "stars" ? 0.45 + 0.55*Math.abs(Math.sin(t*p.sp*2 + p.tw)) : 0.75 + 0.25*Math.sin(t*3 + p.tw);
+    const sz = p.size * (mode === "heart" ? (0.85 + (b-1)*4) : 1);
+    ctx.fillStyle = `hsla(${p.hue},${p.sat}%,${p.lit}%,${twinkle})`;
+    ctx.beginPath(); ctx.arc(p.x, p.y, sz, 0, Math.PI*2); ctx.fill();
+  }
+
+  // aros
+  for (let i=rings.length-1;i>=0;i--){
+    const r = rings[i]; r.r += 4; r.life -= 0.03;
+    if (r.life <= 0){ rings.splice(i,1); continue; }
+    ctx.strokeStyle = `rgba(255,150,180,${r.life*0.5})`; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI*2); ctx.stroke();
+  }
+  // mini corazones
+  for (let i=bursts.length-1;i>=0;i--){
+    const h = bursts[i];
+    h.vy += 0.06; h.vx *= 0.98; h.vy *= 0.98; h.x += h.vx; h.y += h.vy; h.life -= 0.014;
+    if (h.life <= 0){ bursts.splice(i,1); continue; }
+    ctx.save(); ctx.translate(h.x, h.y); ctx.rotate(h.rot);
+    ctx.fillStyle = `hsla(${h.hue},90%,68%,${h.life})`;
+    heartPath(ctx, 0, -h.s/2, h.s); ctx.fill(); ctx.restore();
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ---------- tamaño ---------- */
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle = "#0d0712"; ctx.fillRect(0,0,W,H);
+  if (!parts.length) makeParticles();
+  else for (const p of parts){ p.sx = rnd(0,W); p.sy = rnd(0,H); }
+  if (mode === "text") textTargets = sampleText(CONFIG.final);
+}
+
+/* ---------- eventos ---------- */
+cv.addEventListener("pointerdown", e => { ptr.x = e.clientX; ptr.y = e.clientY; ptr.active = true; advance(e.clientX, e.clientY); });
+cv.addEventListener("pointermove", e => { ptr.x = e.clientX; ptr.y = e.clientY; ptr.active = true; });
+cv.addEventListener("pointerup",   e => { if (e.pointerType !== "mouse") ptr.active = false; });
+cv.addEventListener("pointerleave",() => { ptr.active = false; });
+window.addEventListener("keydown", e => { if (e.key === " " || e.key === "Enter"){ e.preventDefault(); advance(W/2, H*0.4); } });
+$("again").addEventListener("click", restart);
+let rT; window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(resize, 120); });
+
+$("introName").textContent = CONFIG.nombre;
+document.title = "Para " + CONFIG.nombre;
+resize();
+requestAnimationFrame(frame);
+// precargar la fuente del final para que las letras salgan bien
+if (document.fonts) document.fonts.load(`italic 120px "Instrument Serif"`).catch(()=>{});
+</script>
+</body>
+</html>
